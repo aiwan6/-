@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -7,20 +8,18 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # 启用日志
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# 🛠️ 您的专属固定配置（已为您完全填妥）
+# 🛠️ 您的专属固定配置
 BOT_TOKEN = "8852759311:AAF6CkyW4glz3mUU8jxip3SMTfcK65U9FSo"
 ADMIN_ID = 5874944720
-GW_URL = "https://yyn.win"
-DB_FILE = "bot_data.db"  # 数据库文件，会自动在同目录下生成
+GW_URL = "https://bn.yyn.win"
+DB_FILE = "bot_data.db"
 
 # 💾 SQLite 数据库初始化
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # 用户表：储存昵称、积分、最后签到日期
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                       (user_id INTEGER PRIMARY KEY, name TEXT, points INTEGER DEFAULT 0, last_sign TEXT)''')
-    # 活跃度表：储存用户每日发言数
     cursor.execute('''CREATE TABLE IF NOT EXISTS activity 
                       (user_id INTEGER, date_str TEXT, msg_count INTEGER DEFAULT 0, 
                        PRIMARY KEY (user_id, date_str))''')
@@ -29,7 +28,7 @@ def init_db():
 
 init_db()
 
-# 📊 统计活跃度与更新用户昵称
+# 📊 统计活跃度
 async def track_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.from_user:
         return
@@ -40,16 +39,12 @@ async def track_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
-    # 更新或插入用户信息
     cursor.execute("INSERT INTO users (user_id, name) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET name=?", (user_id, name, name))
-    # 增加今日发言计数
     cursor.execute("INSERT INTO activity (user_id, date_str, msg_count) VALUES (?, ?, 1) ON CONFLICT(user_id, date_str) DO UPDATE SET msg_count = msg_count + 1", (user_id, today))
-    
     conn.commit()
     conn.close()
 
-# 📝 每日签到功能命令：/sign
+# 📝 每日签到
 async def sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await track_activity(update, context)
     user = update.message.from_user
@@ -58,7 +53,6 @@ async def sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT points, last_sign FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     
@@ -75,15 +69,13 @@ async def sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     conn.close()
 
-# 🏆 活跃度排行榜计算逻辑
+# 🏆 活跃度排行榜
 def get_ranking(days=1):
     now = datetime.now()
     target_dates = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
     
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
-    # 联合查询：统计指定日期内的发言总数，并关联用户昵称
     placeholders = ','.join('?' for _ in target_dates)
     query = f'''
         SELECT u.name, SUM(a.msg_count) as total 
@@ -99,7 +91,7 @@ def get_ranking(days=1):
     conn.close()
     return ranking
 
-# 💬 排行榜指令群：/rank
+# 💬 排行榜指令
 async def show_rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await track_activity(update, context)
     args = context.args
@@ -120,15 +112,21 @@ async def show_rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{idx}. {name} —— 发言 {count} 条\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# 🌐 官网功能命令：/gw
+# 🌐 官网功能
 async def show_website(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await track_activity(update, context)
     await update.message.reply_text(f"我们的官方网站是：{GW_URL}")
 
+# 🚀 核心修正：显式创建并设置全局事件循环（强行修复 Python 3.14 报错）
 def main():
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # 绑定所有群组专属斜杠命令
     app.add_handler(CommandHandler("sign", sign_in))
     app.add_handler(CommandHandler("gw", show_website))
     app.add_handler(CommandHandler("rank", show_rank))
@@ -136,7 +134,7 @@ def main():
     app.add_handler(CommandHandler("rank30", lambda u, c: (setattr(c, 'args', ['30']), show_rank(u, c))))
     app.add_handler(MessageHandler(filters.COMMAND, track_activity))
 
-    print("🤖 您的专属群组机器人已成功启动并在后台监听中...")
+    print("🤖 终极兼容版机器人已成功启动并在后台监听中...")
     app.run_polling()
 
 if __name__ == '__main__':
